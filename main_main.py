@@ -10,7 +10,7 @@ import numpy as np
 from itertools import chain
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_path = "dataset_cleaned"
     output_dir = "ltx_video_finetuned"
     batch_size=2
@@ -26,6 +26,7 @@ if __name__ == "__main__":
         f"{save_directory}/vae", torch_dtype=torch.bfloat16)
     transformer.to(device)
     vae.to(device)
+
     """text_encoder = T5EncoderModel.from_pretrained(
         f"{save_directory}/text_encoder", torch_dtype=torch.bfloat16)
     tokenizer = T5Tokenizer.from_pretrained(f"{save_directory}/tokenizer")
@@ -52,7 +53,7 @@ if __name__ == "__main__":
 
     #LTX_VIDEO training
     dataset = TFRecordVideoDataset(dataset_path)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)#, num_workers=num_workers)
     optimizer = torch.optim.AdamW(
         chain(transformer.parameters(), vae.parameters()), lr=learning_rate
     )
@@ -62,11 +63,32 @@ if __name__ == "__main__":
         total_loss = 0
         for batch in dataloader:
             pixel_values = batch["pixel_values"].to(device)
+            # todo: the problem is in the dimensions of pixel_values.
+            # it gives 2, 150, 3, 256, 256 but I think it also needs the number of seconds as separate frame
 
-            transformer_outputs = transformer(pixel_values=pixel_values)
+
+            hidden_states = pixel_values  # Adjust based on your data preprocessing
+            encoder_hidden_states = None  # Set accordingly if available
+            timestep = torch.tensor([0]).to(device)  # Example timestep; adjust as needed
+            encoder_attention_mask = None  # Set accordingly if available
+            num_frames = pixel_values.shape[2]  # TODO: Assuming shape is (B, C, T, H, W)
+            height = pixel_values.shape[3]
+            width = pixel_values.shape[4]
+
+
+            transformer_outputs = transformer(
+                hidden_states=hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                timestep=timestep,
+                encoder_attention_mask=encoder_attention_mask,
+                num_frames=num_frames,
+                height=height,
+                width=width
+            )
+            #transformer_outputs = transformer(pixel_values=pixel_values)
             transformer_loss = transformer_outputs.loss
 
-            vae_outputs = vae(pixel_values=pixel_values)
+            vae_outputs = vae(sample=pixel_values)
             vae_loss = vae_outputs.loss
 
 

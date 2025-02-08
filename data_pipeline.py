@@ -43,10 +43,10 @@ class TFRecordVideoDataset(Dataset):
         return {"pixel_values": video_tensor}
 
 """# TESTIING CODE
+from torch.utils.data import DataLoader
 tfrecord_dir = 'dataset_cleaned'
 dataset = TFRecordVideoDataset(tfrecord_dir)
 dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
 for batch in dataloader:
     video = batch['pixel_values']
-    print(f'Video batch shape: {video.shape}')
-"""
+    print(f'Video batch shape: {video.shape}')"""
