@@ -1,11 +1,23 @@
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
 
-# Install dependencies
-RUN apt-get update && apt-get install -y python3-pip git
+# Install sudo
+USER root
+RUN apt-get update && \
+    apt-get install -y sudo git
 
-# Install PyTorch with CUDA 11.8
-RUN pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.1+cu118 \
-    --index-url https://download.pytorch.org/whl/cu118
+WORKDIR /workspace
+
+# Optional: Create a non-root user with sudo privileges
+RUN useradd -ms /bin/bash devuser && \
+    echo "devuser:devpassword" | chpasswd && \
+    adduser devuser sudo && \
+    adduser devuser video
+
+USER devuser
+# Copy the requirements.txt and install Python packages
+COPY ../diffusion-pipe/requirements.txt /workspace/
+RUN pip install -r requirements.txt
+
 
 # Verify installation
-CMD ["python3", "-c", "import torch; print(torch.cuda.is_available())"]
+#CMD ["python3", "-c", "import torch; print(torch.cuda.is_available())"]

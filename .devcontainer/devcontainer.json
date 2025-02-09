@@ -1,38 +1,17 @@
 {
-  "name": "LTX-Video-Training",
+  "name": "GPU Enabled Dev Container",
   "build": {
-      "dockerfile": "Dockerfile",
-      "context": ".."
-  },
-  "features": {
-      "ghcr.io/devcontainers/features/cuda:11.8": {
-          "version": "11.8"
-      },
-      "ghcr.io/devcontainers/features/python:1": {
-          "version": "3.10"
-      }
+    "dockerfile": "Dockerfile"
   },
   "runArgs": [
-      "--gpus=all",
-      "--shm-size=16G"
+    "--runtime=nvidia",
+    "--gpus=all",
+    "--env-file", ".env"
   ],
-  "containerEnv": {
-      "LD_LIBRARY_PATH": "/usr/local/cuda-11.8/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
-  },
-  "remoteUser": "developer",
-  "customizations": {
-      "vscode": {
-          "extensions": [
-              "ms-python.python",
-              "ms-toolsai.jupyter",
-              "nvidia.nsight-vscode-edition"
-          ],
-          "settings": {
-              "python.defaultInterpreterPath": "/usr/local/bin/python",
-              "python.linting.enabled": true
-          }
-      }
-  },
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "postCreateCommand": "echo 'Container created and GPU enabled!'",
+  "settings": {},
+  "extensions": [],
+  "dockerContext": "default",
+  "workspaceMount": "source=${localWorkspaceFolder}/,target=/workspace/,type=bind",
   "workspaceFolder": "/workspace"
 }
