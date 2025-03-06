@@ -4,14 +4,8 @@
     "dockerfile": "Dockerfile"
   },
   "runArgs": [
-    "--runtime=nvidia",
-    "--gpus=all",
-    "--env-file", ".env"
+    "--gpus=all"
   ],
-  "postCreateCommand": "echo 'Container created and GPU enabled!'",
-  "settings": {},
-  "extensions": [],
-  "dockerContext": "default",
-  "workspaceMount": "source=${localWorkspaceFolder}/,target=/workspace/,type=bind",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace"
 }

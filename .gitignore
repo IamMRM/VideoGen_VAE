@@ -173,3 +173,6 @@ cython_debug/
 # directories
 dataset_*
 ltx_video_*
+/diffusion-pipe/ltx_video_model/
+/diffusion-pipe/dataset_mp4_cleaned/
+*.mp4

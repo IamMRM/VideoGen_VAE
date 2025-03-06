@@ -1,23 +1,20 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
 
 # Install sudo
 USER root
+
 RUN apt-get update && \
-    apt-get install -y sudo git
+    apt-get install -y sudo git && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
+RUN chmod -R 777 /tmp
 
-# Optional: Create a non-root user with sudo privileges
-RUN useradd -ms /bin/bash devuser && \
-    echo "devuser:devpassword" | chpasswd && \
-    adduser devuser sudo && \
-    adduser devuser video
-
-USER devuser
+COPY . /workspace/
 # Copy the requirements.txt and install Python packages
-COPY ../diffusion-pipe/requirements.txt /workspace/
-RUN pip install -r requirements.txt
-
+#COPY requirements.txt /workspace/
+#RUN pip install -r requirements.txt
+#USER devuser
 
 # Verify installation
-#CMD ["python3", "-c", "import torch; print(torch.cuda.is_available())"]
+CMD ["python3", "-c", "import torch; print(torch.cuda.is_available())"]
