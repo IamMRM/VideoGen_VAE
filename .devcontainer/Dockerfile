@@ -11,10 +11,6 @@ WORKDIR /workspace
 RUN chmod -R 777 /tmp
 
 COPY . /workspace/
-# Copy the requirements.txt and install Python packages
-#COPY requirements.txt /workspace/
-#RUN pip install -r requirements.txt
-#USER devuser
 
 # Verify installation
 CMD ["python3", "-c", "import torch; print(torch.cuda.is_available())"]

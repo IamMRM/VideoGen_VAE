@@ -4,8 +4,12 @@
     "dockerfile": "Dockerfile"
   },
   "runArgs": [
-    "--gpus=all"
+    "--gpus=all",
+    "--shm-size=64g"
   ],
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "workspaceFolder": "/workspace"
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=/home/roscha/Desktop/dataset,target=/dataset,type=bind"
+  ]
 }

@@ -1,118 +1,85 @@
 import os
-import tensorflow as tf
+#import tensorflow as tf
 import torch
+import torch.optim as optim
 from diffusers import LTXVideoTransformer3DModel, AutoencoderKLLTXVideo, LTXImageToVideoPipeline, FlowMatchEulerDiscreteScheduler
+from video_diffusion_pytorch import Unet3D, GaussianDiffusion, Trainer
 from transformers import T5EncoderModel, T5Tokenizer
-from data_pipeline import TFRecordVideoDataset
+from data_pipeline import VideoDataGenerator
 from torch.utils.data import DataLoader
+from transformers import CLIPTokenizer, CLIPTextModel
 from typing import List, Dict, Any
 import numpy as np
 from itertools import chain
 
+
+
+def encode_text(text: str, batch_size: int):
+    texts = [text] * batch_size
+    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = text_encoder(**inputs)
+    return outputs.last_hidden_state[:, -1, :]
+
 if __name__ == "__main__":
-    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataset_path = "dataset_cleaned"
-    output_dir = "ltx_video_finetuned"
-    batch_size=2
-    num_workers=2
-    learning_rate=3e-4
-    num_epochs=50
+    device = "cpu"#torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    dataset_path = "/dataset/dataset_mp4_cleaned"
+    output_dir = "output"
+    batch_size = 1
+    tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+    text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
+    # Freeze text encoder to save memory
+    for param in text_encoder.parameters():
+        param.requires_grad = False
+
+    num_workers = min(8, os.cpu_count())
+    num_epochs = 5
+    image_size = 128
     os.makedirs(output_dir, exist_ok=True)
-    save_directory = "./ltx_video_model"
 
-    transformer = LTXVideoTransformer3DModel.from_pretrained(
-        f"{save_directory}/transformer", torch_dtype=torch.bfloat16)
-    vae = AutoencoderKLLTXVideo.from_pretrained(
-        f"{save_directory}/vae", torch_dtype=torch.bfloat16)
-    transformer.to(device)
-    vae.to(device)
+    dataset = VideoDataGenerator(dataset_path, height_or_width_pixels=image_size)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)  # adjust num_workers if needed
 
-    """text_encoder = T5EncoderModel.from_pretrained(
-        f"{save_directory}/text_encoder", torch_dtype=torch.bfloat16)
-    tokenizer = T5Tokenizer.from_pretrained(f"{save_directory}/tokenizer")
-    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(f"{save_directory}/scheduler")
+    model = Unet3D(dim=128, dim_mults=(1, 2, 4, 8)).to(device)
+    diffusion = GaussianDiffusion(
+        model,
+        image_size=image_size,
+        num_frames=440,
+        timesteps=1000,
+        loss_type='l2'
+    ).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    pipeline = LTXImageToVideoPipeline(  # use LTXPipeline for just text to video generation
-        transformer=transformer,
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        scheduler=scheduler
-    )
-    model = pipeline.to(device)"""
-    #from PIL import Image
-    #width, height = 256, 256
-    #random_image_array = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
-    #random_image = Image.fromarray(random_image_array)
-    #prompt = "something cool happening"
-    #result = pipeline(prompt=prompt, image=random_image, )
-    #video_frames = result.frames
-    #from diffusers.utils import export_to_video
-    #export_to_video(video_frames, "output.mp4", fps=24)
+    use_amp = device == "cuda"
+    if use_amp:
+        scaler = torch.cuda.amp.GradScaler()
 
-
-    #LTX_VIDEO training
-    dataset = TFRecordVideoDataset(dataset_path)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)#, num_workers=num_workers)
-    optimizer = torch.optim.AdamW(
-        chain(transformer.parameters(), vae.parameters()), lr=learning_rate
-    )
-    transformer.train()
-    vae.train()
     for epoch in range(num_epochs):
+        model.train()
         total_loss = 0
         for batch in dataloader:
-            pixel_values = batch["pixel_values"].to(device)
-            # todo: the problem is in the dimensions of pixel_values.
-            # it gives 2, 150, 3, 256, 256 but I think it also needs the number of seconds as separate frame
-
-
-            hidden_states = pixel_values  # Adjust based on your data preprocessing
-            encoder_hidden_states = None  # Set accordingly if available
-            timestep = torch.tensor([0]).to(device)  # Example timestep; adjust as needed
-            encoder_attention_mask = None  # Set accordingly if available
-            num_frames = pixel_values.shape[2]  # TODO: Assuming shape is (B, C, T, H, W)
-            height = pixel_values.shape[3]
-            width = pixel_values.shape[4]
-
-
-            transformer_outputs = transformer(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                timestep=timestep,
-                encoder_attention_mask=encoder_attention_mask,
-                num_frames=num_frames,
-                height=height,
-                width=width
-            )
-            #transformer_outputs = transformer(pixel_values=pixel_values)
-            transformer_loss = transformer_outputs.loss
-
-            vae_outputs = vae(sample=pixel_values)
-            vae_loss = vae_outputs.loss
-
-
-            loss = transformer_loss + vae_loss
-
-            # Backward pass
             optimizer.zero_grad()
-            loss.backward()
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(
-                chain(transformer.parameters(), vae.parameters()), max_norm=1.0
-            )
-
-            optimizer.step()
+            videos = batch['pixel_values'].to(device)
+            text_embeds = encode_text("chatgpot is great", batch_size)
+            if use_amp:
+                with torch.cuda.amp.autocast():
+                    loss = diffusion(videos, cond=text_embeds)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss = diffusion(videos, cond=text_embeds)
+                loss.backward()
+                optimizer.step()
 
             total_loss += loss.item()
 
-            # Print epoch statistics
         avg_loss = total_loss / len(dataloader)
-        print(f"Epoch {epoch + 1}/{num_epochs}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch [{epoch + 1}/{num_epochs}] Loss: {avg_loss:.4f}")
+        torch.save(model.state_dict(), f"checkpoint_epoch_{epoch + 1}.pth")
 
-        if (epoch + 1) % 5 == 0:
-            checkpoint_dir = os.path.join(output_dir, f"checkpoint-epoch-{epoch + 1}")
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            model.save_pretrained(checkpoint_dir)
-            # Save the optimizer state
-            torch.save(optimizer.state_dict(), os.path.join(checkpoint_dir, 'optimizer.pt'))
+        model.eval()
+        with torch.no_grad():
+            sample_text_embeds = encode_text("chatgpot is great", 1)
+            generated_video = diffusion.sample(cond=sample_text_embeds, cond_scale=2.0)
+            torch.save(generated_video, f"generated_epoch_{epoch + 1}.pt")
