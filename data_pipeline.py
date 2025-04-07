@@ -60,7 +60,7 @@ class VideoDataGenerator(Dataset):
         frames = np.stack(frames[:self.num_frames], axis=0)  # Shape: (T, H, W, C)
         video = (frames.astype(np.float16) / 127.5) - 1.0
         video = torch.from_numpy(video).permute(3, 0, 1, 2)
-        video_tensor = video.to(torch.bfloat16)
+        video_tensor = video.to(torch.float16)
         return {"pixel_values": video_tensor}
 
 # TESTIING CODE
