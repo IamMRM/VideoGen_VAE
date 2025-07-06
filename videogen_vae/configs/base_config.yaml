@@ -1,0 +1,110 @@
+# Video Generation VAE Configuration
+
+project:
+  name: "videogen_vae"
+  seed: 42
+  output_dir: "./outputs"
+  log_dir: "./logs"
+  checkpoint_dir: "./checkpoints"
+  
+model:
+  architecture: "dit"  # Options: "dit" (Diffusion Transformer), "unet3d", "videoldm"
+  
+  # Model dimensions
+  dim: 512
+  dim_mults: [1, 2, 4, 8]
+  num_heads: 8
+  head_dim: 64
+  depth: 24
+  
+  # Video parameters
+  num_frames: 480  # 20 seconds at 24 fps
+  frame_size: 512
+  channels: 3
+  
+  # Diffusion parameters
+  timesteps: 1000
+  loss_type: "l2"
+  beta_schedule: "cosine"
+  
+  # Conditioning
+  use_text_conditioning: true
+  text_encoder: "clip"  # Options: "clip", "t5", "llama"
+  
+  # Optimization
+  gradient_checkpointing: true
+  use_flash_attention: true
+  
+data:
+  dataset_path: "/dataset/dataset_mp4_cleaned"
+  batch_size: 1  # Per GPU
+  num_workers: 4
+  
+  # Video specifications
+  fps: 24
+  duration: 20  # seconds
+  resolution: 512
+  
+  # Data augmentation
+  random_flip: true
+  color_jitter: false
+  
+  # Caching
+  cache_latents: true
+  cache_dir: "./cache"
+  
+training:
+  # Optimization
+  optimizer: "adamw"
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  gradient_clip_val: 1.0
+  
+  # Scheduler
+  scheduler: "cosine"
+  warmup_steps: 1000
+  
+  # Training duration
+  num_epochs: 100
+  save_every_n_epochs: 5
+  validate_every_n_epochs: 1
+  
+  # Mixed precision
+  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  
+  # Multi-GPU
+  distributed: true
+  num_gpus: 2
+  strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
+  
+  # Memory optimization
+  gradient_accumulation_steps: 4
+  enable_xformers: true
+  
+  # Logging
+  log_every_n_steps: 10
+  use_wandb: true
+  wandb_project: "videogen_vae"
+  
+inference:
+  num_inference_steps: 50
+  guidance_scale: 7.5
+  fps: 24
+  
+  # Memory optimization
+  use_fp16: true
+  enable_tiling: true
+  
+  # Output
+  output_format: "mp4"
+  codec: "h264"
+  
+# Hardware specific optimizations
+hardware:
+  device: "cuda"
+  num_gpus: 2
+  gpu_memory: 24  # GB per GPU
+  
+  # A40/3090 specific optimizations
+  enable_tf32: true
+  cudnn_benchmark: true 
