@@ -110,7 +110,6 @@ class VideoDiffusion(nn.Module):
             
     def _create_ema_model(self):
         """Create exponential moving average model"""
-        # Create a copy of the model with the same architecture
         import copy
         ema_model = copy.deepcopy(self.model)
         ema_model.eval()

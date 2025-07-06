@@ -8,83 +8,88 @@ project:
   checkpoint_dir: "./checkpoints"
   
 model:
-  architecture: "dit"  # Options: "dit" (Diffusion Transformer), "unet3d", "videoldm"
-  
-  # Model dimensions
-  dim: 32 #512
-  dim_mults: [1, 2] #, 4, 8]
-  num_heads: 2 #8
-  head_dim: 64
-  depth: 6 #24
-  
+  architecture: "simple_dit"  # Use simplified architecture for better memory efficiency
+
+  # Compact model dimensions
+  dim: 128           # Even smaller for memory efficiency
+  dim_mults: [1, 2]  # Reduced complexity
+  num_heads: 4
+  head_dim: 32
+  depth: 6           # Reduced depth for better memory usage
+
   # Video parameters
-  num_frames: 480  # 20 seconds at 24 fps
-  frame_size: 512
+  num_frames: 8   # Short videos for memory efficiency
+  frame_size: 512  # Match dataset resolution
   channels: 3
-  
+  patch_size: 16   # Larger patches to reduce memory usage
+  mlp_ratio: 2.0
+  dropout: 0.1
+  learn_sigma: false
+
   # Diffusion parameters
-  timesteps: 100 #1000
+  timesteps: 1000
   loss_type: "l2"
   beta_schedule: "cosine"
-  
+
   # Conditioning
-  use_text_conditioning: false #true
+  use_text_conditioning: false  # Disabled for single-activity dataset
   text_encoder: "clip"  # Options: "clip", "t5", "llama"
-  
+
   # Optimization
   gradient_checkpointing: true
-  use_flash_attention: true
-  
+  use_flash_attention: false  # Disabled for stability
+
 data:
-  dataset_path: "/home/roscha/Desktop/dataset/dataset_mp4_cleaned"
-  batch_size: 1  # Per GPU
-  num_workers: 4
-  
+  dataset_path: "../../dataset/dataset_mp4_cleaned"
+  batch_size: 1  # Reduced batch size for memory efficiency
+  num_workers: 0  # Disable multiprocessing for stability
+
   # Video specifications
   fps: 24
-  duration: 0.5  # seconds
-  resolution: 32 #512
-  
+  duration: 1  # seconds
+  resolution: 512  # Match model frame_size
+
   # Data augmentation
-  random_flip: true
+  random_flip: false  # Disable for stability
   color_jitter: false
-  
+
   # Caching
-  cache_latents: true
+  cache_latents: false  # Disable caching for now
   cache_dir: "./cache"
-  
+
 training:
   # Optimization
   optimizer: "adamw"
   learning_rate: 1e-4
   weight_decay: 0.01
   gradient_clip_val: 1.0
-  
+
   # Scheduler
   scheduler: "cosine"
   warmup_steps: 1000
-  
+
   # Training duration
-  num_epochs: 2
-  save_every_n_epochs: 1
-  validate_every_n_epochs: 1
-  
+  num_epochs: 50  # Reasonable for single-activity dataset
+  save_every_n_epochs: 5
+  validate_every_n_epochs: 2
+
   # Mixed precision
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
-  
+
   # Multi-GPU
-  distributed: false #true
-  num_gpus: 1
+  distributed: true
+  num_gpus: 2
   strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
-  
+
   # Memory optimization
-  gradient_accumulation_steps: 8 #4
-  enable_xformers: true
-  cpu_offload: true
+  gradient_accumulation_steps: 8  # Increased to compensate for smaller batch size
+  enable_xformers: false  # Disabled for stability
+  cpu_offload: false
   pin_memory: true
+
   # Logging
   log_every_n_steps: 10
-  use_wandb: false #true
+  use_wandb: true
   wandb_project: "videogen_vae"
   
 inference:
