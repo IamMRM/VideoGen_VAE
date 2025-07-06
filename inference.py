@@ -16,14 +16,6 @@ base_model = LTXPipeline.from_pretrained(
     device_map="balanced"
 )
 
-#lora_path = "/workspace/ltx_finetuned/20250210_21-52-56/epoch10"
-#base_model = PeftModel.from_pretrained(base_model.transformer, lora_path)
-#### FMS
-#base_model.transformer = model.merge_and_unload()
-#base_model.to("cuda")
-#base_model.unet.load_attn_procs(lora_path)
-
-
  # Follow prompt guidelines:cite[4]
 prompt = "A detailed cinematic scene:A woman with long brown hair and light skin smiles at another woman with long blonde hair. The camera angle is a close-up, focused on the woman's face. The lighting is warm and natural, likely from the setting sun, casting a soft glow on the scene. The scene appears to be real-life footage."
 generation_params = {
