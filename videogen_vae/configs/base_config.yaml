@@ -11,11 +11,11 @@ model:
   architecture: "dit"  # Options: "dit" (Diffusion Transformer), "unet3d", "videoldm"
   
   # Model dimensions
-  dim: 512
-  dim_mults: [1, 2, 4, 8]
-  num_heads: 8
+  dim: 32 #512
+  dim_mults: [1, 2] #, 4, 8]
+  num_heads: 2 #8
   head_dim: 64
-  depth: 24
+  depth: 6 #24
   
   # Video parameters
   num_frames: 480  # 20 seconds at 24 fps
@@ -23,12 +23,12 @@ model:
   channels: 3
   
   # Diffusion parameters
-  timesteps: 1000
+  timesteps: 100 #1000
   loss_type: "l2"
   beta_schedule: "cosine"
   
   # Conditioning
-  use_text_conditioning: true
+  use_text_conditioning: false #true
   text_encoder: "clip"  # Options: "clip", "t5", "llama"
   
   # Optimization
@@ -36,14 +36,14 @@ model:
   use_flash_attention: true
   
 data:
-  dataset_path: "/dataset/dataset_mp4_cleaned"
+  dataset_path: "/home/roscha/Desktop/dataset/dataset_mp4_cleaned"
   batch_size: 1  # Per GPU
   num_workers: 4
   
   # Video specifications
   fps: 24
-  duration: 20  # seconds
-  resolution: 512
+  duration: 0.5  # seconds
+  resolution: 32 #512
   
   # Data augmentation
   random_flip: true
@@ -65,25 +65,26 @@ training:
   warmup_steps: 1000
   
   # Training duration
-  num_epochs: 100
-  save_every_n_epochs: 5
+  num_epochs: 2
+  save_every_n_epochs: 1
   validate_every_n_epochs: 1
   
   # Mixed precision
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
   
   # Multi-GPU
-  distributed: true
-  num_gpus: 2
+  distributed: false #true
+  num_gpus: 1
   strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
   
   # Memory optimization
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 8 #4
   enable_xformers: true
-  
+  cpu_offload: true
+  pin_memory: true
   # Logging
   log_every_n_steps: 10
-  use_wandb: true
+  use_wandb: false #true
   wandb_project: "videogen_vae"
   
 inference:
