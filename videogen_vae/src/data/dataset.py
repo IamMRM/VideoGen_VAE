@@ -127,13 +127,27 @@ class VideoDataset(Dataset):
         """Load video frames"""
         cap = cv2.VideoCapture(str(video_path))
 
+        # Check if video opened successfully
+        if not cap.isOpened():
+            logger.warning(f"Could not open video: {video_path}")
+            return self._create_dummy_frames()
+
         # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         video_fps = cap.get(cv2.CAP_PROP_FPS)
 
+        # Handle corrupted or empty videos
+        if total_frames <= 0:
+            logger.warning(f"Video has no frames or is corrupted: {video_path}")
+            cap.release()
+            return self._create_dummy_frames()
+
         # Calculate frame indices to sample
         if total_frames < self.num_frames:
             # Loop video if too short
+            if total_frames == 0:
+                cap.release()
+                return self._create_dummy_frames()
             frame_indices = list(range(total_frames)) * (self.num_frames // total_frames + 1)
             frame_indices = frame_indices[:self.num_frames]
         else:
@@ -141,18 +155,23 @@ class VideoDataset(Dataset):
             frame_indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
 
         frames = []
-        for idx in frame_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frames.append(frame)
-            else:
-                # Use last valid frame if read fails
-                if frames:
-                    frames.append(frames[-1])
+        try:
+            for idx in frame_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frames.append(frame)
                 else:
-                    frames.append(np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8))
+                    # Use last valid frame if read fails
+                    if frames:
+                        frames.append(frames[-1])
+                    else:
+                        frames.append(np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8))
+        except Exception as e:
+            logger.warning(f"Error reading frames from {video_path}: {e}")
+            cap.release()
+            return self._create_dummy_frames()
 
         cap.release()
 
@@ -161,6 +180,15 @@ class VideoDataset(Dataset):
             frames.append(frames[-1] if frames else np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8))
 
         return np.array(frames[:self.num_frames])
+
+    def _create_dummy_frames(self) -> np.ndarray:
+        """Create dummy frames for corrupted videos"""
+        dummy_frames = []
+        for _ in range(self.num_frames):
+            # Create a black frame
+            dummy_frame = np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8)
+            dummy_frames.append(dummy_frame)
+        return np.array(dummy_frames)
 
     def _load_caption(self, video_path: Path) -> str:
         """Load caption for video"""
@@ -224,8 +252,19 @@ class VideoDataset(Dataset):
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_path}: {e}")
 
-        # Load video
-        frames = self._load_video(video_path)
+        # Load video with retry for corrupted files
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                frames = self._load_video(video_path)
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to load video after {max_retries} attempts: {video_path}, error: {e}")
+                    frames = self._create_dummy_frames()
+                else:
+                    logger.warning(f"Attempt {attempt + 1} failed for {video_path}: {e}")
+                    continue
 
         # Get original dimensions for bucketing
         if self.use_bucketing and len(frames) > 0:

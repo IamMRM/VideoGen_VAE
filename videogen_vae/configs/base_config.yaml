@@ -10,18 +10,18 @@ project:
 model:
   architecture: "simple_dit"  # Use simplified architecture for better memory efficiency
 
-  # Compact model dimensions
-  dim: 128           # Even smaller for memory efficiency
+  # Conservative model dimensions for memory efficiency
+  dim: 160           # Small increase from 128
   dim_mults: [1, 2]  # Reduced complexity
-  num_heads: 4
+  num_heads: 5
   head_dim: 32
-  depth: 6           # Reduced depth for better memory usage
+  depth: 8           # Moderate depth increase
 
   # Video parameters
-  num_frames: 8   # Short videos for memory efficiency
+  num_frames: 10  # Conservative length for memory efficiency
   frame_size: 512  # Match dataset resolution
   channels: 3
-  patch_size: 16   # Larger patches to reduce memory usage
+  patch_size: 16   # Keep larger patches for efficiency
   mlp_ratio: 2.0
   dropout: 0.1
   learn_sigma: false
@@ -41,8 +41,8 @@ model:
 
 data:
   dataset_path: "../../dataset/dataset_mp4_cleaned"
-  batch_size: 1  # Reduced batch size for memory efficiency
-  num_workers: 0  # Disable multiprocessing for stability
+  batch_size: 2  # Conservative batch size
+  num_workers: 2  # Re-enable some multiprocessing for faster data loading
 
   # Video specifications
   fps: 24
@@ -50,11 +50,11 @@ data:
   resolution: 512  # Match model frame_size
 
   # Data augmentation
-  random_flip: false  # Disable for stability
+  random_flip: true   # Re-enable for better training
   color_jitter: false
 
   # Caching
-  cache_latents: false  # Disable caching for now
+  cache_latents: true   # Re-enable caching for faster loading
   cache_dir: "./cache"
 
 training:
@@ -82,7 +82,7 @@ training:
   strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
 
   # Memory optimization
-  gradient_accumulation_steps: 8  # Increased to compensate for smaller batch size
+  gradient_accumulation_steps: 4  # Increased to maintain effective batch size
   enable_xformers: false  # Disabled for stability
   cpu_offload: false
   pin_memory: true
