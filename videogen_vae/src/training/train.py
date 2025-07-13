@@ -30,7 +30,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.dit import create_dit_model
 from models.simple_dit import create_simple_dit_model
 from models.diffusion import VideoDiffusion
-from data.dataset import create_dataloader
+from data.dataset import create_dataloader, VideoDataset, VideoCollator
 from utils.ema import EMAModel
 from utils.metrics import calculate_fvd, calculate_is
 
@@ -73,7 +73,9 @@ class VideoGenerationTrainer:
         # Training state
         self.global_step = 0
         self.epoch = 0
-        self.best_fvd = float('inf')
+        self.best_val_loss = float('inf')
+        self.patience = 10  # Early stopping patience
+        self.patience_counter = 0
 
     def setup_directories(self):
         """Create necessary directories"""
@@ -141,20 +143,61 @@ class VideoGenerationTrainer:
         """Setup data loaders"""
         logger.info("Setting up data loaders...")
 
-        # Create dataloader
-        self.train_dataloader = create_dataloader(
-            self.config,
-            tokenizer=self.tokenizer if hasattr(self, 'tokenizer') else None
+        # Create full dataset
+        dataset = VideoDataset(
+            data_dir=self.config['data']['dataset_path'],
+            resolution=self.config['data']['resolution'],
+            fps=self.config['data']['fps'],
+            duration=self.config['data']['duration'],
+            cache_dir=self.config['data']['cache_dir'] if self.config['data']['cache_latents'] else None,
+            augment=True,  # Always augment training data
+            num_workers=self.config['data']['num_workers'],
+            num_frames=self.config['model']['num_frames'],
+        )
+
+        # Split dataset into train/val (80/20 split)
+        total_size = len(dataset)
+        train_size = int(0.8 * total_size)
+        val_size = total_size - train_size
+
+        train_dataset, val_dataset = torch.utils.data.random_split(
+            dataset, [train_size, val_size],
+            generator=torch.Generator().manual_seed(42)
+        )
+
+        # Create dataloaders
+        collator = VideoCollator(tokenizer=self.tokenizer if hasattr(self, 'tokenizer') else None)
+
+        self.train_dataloader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=self.config['data']['batch_size'],
+            shuffle=True,
+            num_workers=self.config['data']['num_workers'],
+            collate_fn=collator,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+        self.val_dataloader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=self.config['data']['batch_size'],
+            shuffle=False,
+            num_workers=self.config['data']['num_workers'],
+            collate_fn=collator,
+            pin_memory=True,
+            drop_last=False,
         )
 
         # Prepare with accelerator
         self.train_dataloader = self.accelerator.prepare(self.train_dataloader)
+        self.val_dataloader = self.accelerator.prepare(self.val_dataloader)
 
         # Calculate steps
         self.steps_per_epoch = len(self.train_dataloader)
         self.total_steps = self.steps_per_epoch * self.config['training']['num_epochs']
 
-        logger.info(f"Train dataset size: {len(self.train_dataloader.dataset)}")
+        logger.info(f"Train dataset size: {len(train_dataset)}")
+        logger.info(f"Val dataset size: {len(val_dataset)}")
         logger.info(f"Steps per epoch: {self.steps_per_epoch}")
         logger.info(f"Total training steps: {self.total_steps}")
 
@@ -285,9 +328,9 @@ class VideoGenerationTrainer:
         """Validation step"""
         logger.info("Running validation...")
 
-        # Get a batch of real videos for comparison
+        # Get a batch of real videos from validation set
         real_videos = None
-        for batch in self.train_dataloader:
+        for batch in self.val_dataloader:
             real_videos = batch['pixel_values']
             break
 
@@ -460,11 +503,24 @@ class VideoGenerationTrainer:
             if self.config['training']['validate_every_n_epochs'] > 0 and (epoch + 1) % self.config['training']['validate_every_n_epochs'] == 0:
                 val_metrics = self.validate()
                 self.accelerator.log(val_metrics, step=self.global_step)
-                
-                # Check if best model
-                is_best = val_metrics.get('fvd', float('inf')) < self.best_fvd
+
+                # Check if best model (based on validation loss)
+                current_val_loss = val_metrics.get('val_loss', float('inf'))
+                is_best = current_val_loss < self.best_val_loss
+
                 if is_best:
-                    self.best_fvd = val_metrics['fvd']
+                    self.best_val_loss = current_val_loss
+                    self.patience_counter = 0
+                    self.save_checkpoint(is_best=True)
+                    logger.info(f"New best validation loss: {current_val_loss:.4f}")
+                else:
+                    self.patience_counter += 1
+                    logger.info(f"Validation loss didn't improve. Patience: {self.patience_counter}/{self.patience}")
+
+                # Early stopping
+                if self.patience_counter >= self.patience:
+                    logger.info(f"Early stopping triggered after {self.patience} epochs without improvement")
+                    break
                     
             # Save checkpoint
             if (epoch + 1) % self.config['training']['save_every_n_epochs'] == 0:

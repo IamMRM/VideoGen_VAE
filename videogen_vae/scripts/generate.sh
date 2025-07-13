@@ -3,7 +3,7 @@
 # Video generation script
 
 # Configuration
-CHECKPOINT_PATH="checkpoints/checkpoint_epoch_0099.pt"
+CHECKPOINT_PATH="checkpoints/best_model.pt"
 OUTPUT_DIR="generated_videos"
 NUM_VIDEOS=2
 NUM_INFERENCE_STEPS=1000
