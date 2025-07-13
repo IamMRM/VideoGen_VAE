@@ -3,18 +3,13 @@
 # Video generation script
 
 # Configuration
-CHECKPOINT_PATH="checkpoints/best_model.pt"
+CHECKPOINT_PATH="checkpoints/checkpoint_epoch_0024.pt"
 OUTPUT_DIR="generated_videos"
-NUM_VIDEOS=4
-NUM_INFERENCE_STEPS=50
+NUM_VIDEOS=2
+NUM_INFERENCE_STEPS=1000
 
 # Example prompts
-PROMPTS=(
-    "A serene beach with waves gently crashing on the shore"
-    "A bustling city street at night with neon lights"
-    "A forest path with sunlight filtering through trees"
-    "A cat playing with a ball of yarn"
-)
+PROMPTS=("")
 
 # Create output directory
 mkdir -p $OUTPUT_DIR

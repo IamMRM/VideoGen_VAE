@@ -8,23 +8,23 @@ project:
   checkpoint_dir: "./checkpoints"
   
 model:
-  architecture: "simple_dit"  # Use simplified architecture for better memory efficiency
+  architecture: "dit"  # Use full DiT architecture for better quality
 
-  # Conservative model dimensions for memory efficiency
-  dim: 160           # Small increase from 128
-  dim_mults: [1, 2]  # Reduced complexity
-  num_heads: 5
-  head_dim: 32
-  depth: 8           # Moderate depth increase
+  # Optimized model dimensions for 2x24GB GPUs
+  dim: 384           # Increased for better quality
+  dim_mults: [1, 2, 4]  # Full complexity
+  num_heads: 8
+  head_dim: 64
+  depth: 12          # Increased depth for better quality
 
   # Video parameters
-  num_frames: 10  # Conservative length for memory efficiency
-  frame_size: 512  # Match dataset resolution
+  num_frames: 16     # Increased for better temporal modeling
+  frame_size: 256    # Reduced for memory efficiency
   channels: 3
-  patch_size: 16   # Keep larger patches for efficiency
-  mlp_ratio: 2.0
+  patch_size: 8      # Smaller patches for better detail
+  mlp_ratio: 4.0
   dropout: 0.1
-  learn_sigma: false
+  learn_sigma: true  # Enable for better quality
 
   # Diffusion parameters
   timesteps: 1000
@@ -37,21 +37,21 @@ model:
 
   # Optimization
   gradient_checkpointing: true
-  use_flash_attention: false  # Disabled for stability
+  use_flash_attention: true  # Enable for better performance
 
 data:
-  dataset_path: "../../dataset/dataset_mp4_cleaned"
-  batch_size: 2  # Conservative batch size
-  num_workers: 2  # Re-enable some multiprocessing for faster data loading
+  dataset_path: "../../dataset/dataset_mp4_cleaned_simple"
+  batch_size: 4  # Increased for 2x24GB GPUs
+  num_workers: 4  # Increased for faster data loading
 
   # Video specifications
   fps: 24
   duration: 1  # seconds
-  resolution: 512  # Match model frame_size
+  resolution: 256  # Match model frame_size
 
   # Data augmentation
   random_flip: true   # Re-enable for better training
-  color_jitter: false
+  color_jitter: true  # Enable for better generalization
 
   # Caching
   cache_latents: true   # Re-enable caching for faster loading
@@ -60,21 +60,21 @@ data:
 training:
   # Optimization
   optimizer: "adamw"
-  learning_rate: 1e-4
+  learning_rate: 2e-4  # Slightly higher for faster convergence
   weight_decay: 0.01
   gradient_clip_val: 1.0
 
   # Scheduler
   scheduler: "cosine"
-  warmup_steps: 1000
+  warmup_steps: 500  # Reduced for smaller dataset
 
   # Training duration
-  num_epochs: 50  # Reasonable for single-activity dataset
+  num_epochs: 100  # More epochs for overfitting on small dataset
   save_every_n_epochs: 5
-  validate_every_n_epochs: 2
+  validate_every_n_epochs: 3
 
   # Mixed precision
-  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  mixed_precision: "bf16"  # Options: "no", "fp16", "bf16"
 
   # Multi-GPU
   distributed: true
@@ -82,13 +82,13 @@ training:
   strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
 
   # Memory optimization
-  gradient_accumulation_steps: 4  # Increased to maintain effective batch size
-  enable_xformers: false  # Disabled for stability
+  gradient_accumulation_steps: 2  # Reduced for better gradient flow
+  enable_xformers: true  # Enable for better performance
   cpu_offload: false
   pin_memory: true
 
   # Logging
-  log_every_n_steps: 10
+  log_every_n_steps: 5  # More frequent logging for small dataset
   use_wandb: true
   wandb_project: "videogen_vae"
   

@@ -258,9 +258,13 @@ def create_dit_model(config: dict) -> VideoDiT:
     
     return VideoDiT(
         video_size=video_size,
+        patch_size=config['model'].get('patch_size', 8),
         hidden_size=config['model']['dim'],
         depth=config['model']['depth'],
         num_heads=config['model']['num_heads'],
         head_dim=config['model']['head_dim'],
+        mlp_ratio=config['model'].get('mlp_ratio', 4.0),
+        dropout=config['model'].get('dropout', 0.0),
+        learn_sigma=config['model'].get('learn_sigma', True),
         use_text_cond=config['model']['use_text_conditioning'],
     ) 

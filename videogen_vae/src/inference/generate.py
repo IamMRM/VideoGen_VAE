@@ -22,6 +22,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.dit import create_dit_model
+from models.simple_dit import create_simple_dit_model
 from models.diffusion import VideoDiffusion
 
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class VideoGenerator:
     """Video generation inference class"""
-    
+
     def __init__(
         self,
         checkpoint_path: str,
@@ -40,33 +41,39 @@ class VideoGenerator:
     ):
         self.device = device
         self.dtype = dtype
-        
+
         # Load checkpoint
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        
+
         # Load config
         if config_path:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
         else:
             self.config = checkpoint.get('config', {})
-            
+
         # Initialize model
         self.setup_model(checkpoint)
-        
+
     def setup_model(self, checkpoint: Dict[str, Any]):
         """Setup model from checkpoint"""
-        # Create model
-        self.model = create_dit_model(self.config)
-        
+        # Create model based on architecture
+        architecture = self.config['model'].get('architecture', 'dit')
+        if architecture == 'simple_dit':
+            logger.info("Creating SimpleVideoDiT model")
+            self.model = create_simple_dit_model(self.config)
+        else:
+            logger.info("Creating VideoDiT model")
+            self.model = create_dit_model(self.config)
+
         # Load weights
         if 'ema_state_dict' in checkpoint:
             logger.info("Loading EMA model weights")
             self.model.load_state_dict(checkpoint['ema_state_dict'])
         else:
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            
+
         # Create diffusion wrapper
         self.diffusion = VideoDiffusion(
             model=self.model,
@@ -75,14 +82,23 @@ class VideoGenerator:
             beta_schedule=self.config['model']['beta_schedule'],
             use_ema=False,  # Already loaded EMA weights
         )
-        
+
         # Move to device and set dtype
         self.diffusion = self.diffusion.to(self.device)
         if self.dtype == torch.float16:
             self.diffusion = self.diffusion.half()
-            
+
         # Set eval mode
         self.diffusion.eval()
+
+        # Debug: Check model dtype
+        model_dtype = next(self.diffusion.model.parameters()).dtype
+        logger.info(f"Model dtype: {model_dtype}")
+
+        # Force model to be in the correct dtype
+        if self.dtype == torch.float16 and model_dtype != torch.float16:
+            logger.warning("Model not in half precision, converting...")
+            self.diffusion = self.diffusion.half()
         
         # Setup text encoder if needed
         if self.config['model']['use_text_conditioning']:

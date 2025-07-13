@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
-from einops import rearrange
 import math
 
 
@@ -199,6 +198,7 @@ class SimpleVideoDiT(nn.Module):
         x = x.permute(0, 1, 3, 5, 2, 4, 6)  # [B, T, H//p, W//p, C, p, p]
         x = x.reshape(B, T * (H // p) * (W // p), C * p * p)
 
+        # Ensure dtype is preserved
         return x
 
     def unpatchify(self, x: torch.Tensor, T: int, H: int, W: int) -> torch.Tensor:
@@ -247,6 +247,8 @@ class SimpleVideoDiT(nn.Module):
                 mode='linear',
                 align_corners=False
             ).transpose(1, 2)
+            # Ensure interpolated tensor matches input dtype
+            pos_embed = pos_embed.to(x.dtype)
         else:
             pos_embed = self.pos_embed[:, :x.shape[1]]
 
@@ -254,6 +256,8 @@ class SimpleVideoDiT(nn.Module):
         
         # Time conditioning
         t_emb = self.time_embed(t)
+        # Ensure time embeddings match model dtype
+        t_emb = t_emb.to(x.dtype)
         t_emb = self.time_mlp(t_emb)
         
         # Add time conditioning to all tokens

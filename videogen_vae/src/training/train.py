@@ -284,6 +284,12 @@ class VideoGenerationTrainer:
         """Validation step"""
         logger.info("Running validation...")
 
+        # Get a batch of real videos for comparison
+        real_videos = None
+        for batch in self.train_dataloader:
+            real_videos = batch['pixel_values']
+            break
+
         # Generate sample videos
         sample_shape = (
             4,  # batch size
@@ -293,16 +299,6 @@ class VideoGenerationTrainer:
             self.config['model']['frame_size']
         )
 
-        # Sample prompts for validation
-        sample_prompts = [
-            "A person walking in the park",
-            "Ocean waves crashing on the beach",
-            "City traffic at night",
-            "Birds flying in the sky"
-        ]
-
-        text_embeddings = self.encode_text(sample_prompts) if sample_prompts else None
-
         # Generate videos
         with torch.no_grad():
             diffusion_model = self.accelerator.unwrap_model(self.diffusion)
@@ -310,7 +306,7 @@ class VideoGenerationTrainer:
                 # Use DDIM for faster sampling
                 samples = diffusion_model.ddim_sample(
                     sample_shape,
-                    text_embeddings,
+                    None,  # No text conditioning
                     ddim_timesteps=self.config['inference']['num_inference_steps'],
                     device=self.accelerator.device,
                     progress=False
@@ -319,31 +315,53 @@ class VideoGenerationTrainer:
                 # Use standard DDPM sampling
                 samples = diffusion_model.sample(
                     sample_shape,
-                    text_embeddings,
+                    None,  # No text conditioning
                     device=self.accelerator.device,
                     progress=False
                 )
 
-        # Calculate metrics (placeholder - implement actual metrics)
-        metrics = {
-            'val_loss': 0.0,  # Implement validation loss
-            'fvd': 0.0,       # Implement FVD calculation
-            'is_score': 0.0,  # Implement IS calculation
-        }
+        # Calculate actual metrics
+        metrics = {}
+
+        if real_videos is not None:
+            # Calculate FVD
+            fvd_score = calculate_fvd(real_videos, samples, device=self.accelerator.device)
+            metrics['fvd'] = fvd_score
+
+            # Calculate IS
+            is_mean, is_std = calculate_is(samples, device=self.accelerator.device)
+            metrics['is_score'] = is_mean
+            metrics['is_std'] = is_std
+
+            # Calculate validation loss
+            val_loss = self.calculate_validation_loss(real_videos, samples)
+            metrics['val_loss'] = val_loss
+        else:
+            metrics = {
+                'val_loss': 0.0,
+                'fvd': 0.0,
+                'is_score': 0.0,
+            }
 
         # Log sample videos
         if self.accelerator.is_main_process:
             # Convert to valid range [0, 1]
-            samples = (samples + 1) / 2
-            samples = torch.clamp(samples, 0, 1)
+            samples_normalized = (samples + 1) / 2
+            samples_normalized = torch.clamp(samples_normalized, 0, 1)
 
             # Log to wandb/tensorboard (only if wandb is enabled)
             if self.config['training']['use_wandb']:
                 self.accelerator.log({
-                    "samples": wandb.Video(samples.cpu().numpy(), fps=self.config['inference']['fps'])
+                    "samples": wandb.Video(samples_normalized.cpu().numpy(), fps=self.config['inference']['fps'])
                 }, step=self.global_step)
 
         return metrics
+
+    def calculate_validation_loss(self, real_videos: torch.Tensor, generated_videos: torch.Tensor) -> float:
+        """Calculate validation loss between real and generated videos"""
+        # Use MSE loss between real and generated videos
+        loss = torch.nn.functional.mse_loss(real_videos, generated_videos)
+        return loss.item()
 
     def save_checkpoint(self, is_best: bool = False):
         """Save model checkpoint"""

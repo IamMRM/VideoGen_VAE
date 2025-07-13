@@ -4,7 +4,7 @@
 
 # Set environment variables
 export CUDA_VISIBLE_DEVICES=0,1
-export OMP_NUM_THREADS=8
+export OMP_NUM_THREADS=12
 
 # Training configuration
 CONFIG_PATH="configs/base_config.yaml"
@@ -16,7 +16,7 @@ mkdir -p outputs logs checkpoints
 # Run training with accelerate (multi-GPU support)
 accelerate launch \
     --num_processes=$NUM_GPUS \
-    --mixed_precision=fp16 \
+    --mixed_precision=bf16 \
     --multi_gpu \
     src/training/train.py \
     --config $CONFIG_PATH
