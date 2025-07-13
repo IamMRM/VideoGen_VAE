@@ -247,7 +247,7 @@ class VideoDataset(Dataset):
 
         if cache_path and cache_path.exists():
             try:
-                data = torch.load(cache_path, map_location='cpu')
+                data = torch.load(cache_path, map_location='cpu', weights_only=True)
                 return data
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_path}: {e}")
@@ -294,7 +294,7 @@ class VideoDataset(Dataset):
         # Save to cache
         if cache_path:
             try:
-                torch.save(data, cache_path)
+                torch.save(data, cache_path, _use_new_zipfile_serialization=True)
             except Exception as e:
                 logger.warning(f"Failed to save cache {cache_path}: {e}")
 

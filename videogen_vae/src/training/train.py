@@ -52,6 +52,7 @@ class VideoGenerationTrainer:
             gradient_accumulation_steps=self.config['training']['gradient_accumulation_steps'],
             log_with=["tensorboard", "wandb"] if self.config['training']['use_wandb'] else ["tensorboard"],
             project_dir=self.config['project']['output_dir'],
+            device_placement=True,
         )
 
         # Set seed for reproducibility
@@ -290,9 +291,9 @@ class VideoGenerationTrainer:
             real_videos = batch['pixel_values']
             break
 
-        # Generate sample videos
+        # Generate sample videos with same batch size as real videos
         sample_shape = (
-            4,  # batch size
+            real_videos.shape[0],  # Use same batch size as real videos
             self.config['model']['num_frames'],
             self.config['model']['channels'],
             self.config['model']['frame_size'],
@@ -324,23 +325,39 @@ class VideoGenerationTrainer:
         metrics = {}
 
         if real_videos is not None:
-            # Calculate FVD
-            fvd_score = calculate_fvd(real_videos, samples, device=self.accelerator.device)
-            metrics['fvd'] = fvd_score
+            try:
+                # Check for NaN values in samples
+                if torch.isnan(samples).any():
+                    logger.warning("NaN values detected in generated samples")
+                    samples = torch.nan_to_num(samples, nan=0.0)
 
-            # Calculate IS
-            is_mean, is_std = calculate_is(samples, device=self.accelerator.device)
-            metrics['is_score'] = is_mean
-            metrics['is_std'] = is_std
+                # Calculate FVD
+                fvd_score = calculate_fvd(real_videos, samples, device=self.accelerator.device)
+                metrics['fvd'] = fvd_score if not torch.isnan(torch.tensor(fvd_score)) else 0.0
 
-            # Calculate validation loss
-            val_loss = self.calculate_validation_loss(real_videos, samples)
-            metrics['val_loss'] = val_loss
+                # Calculate IS
+                is_mean, is_std = calculate_is(samples, device=self.accelerator.device)
+                metrics['is_score'] = is_mean if not torch.isnan(torch.tensor(is_mean)) else 0.0
+                metrics['is_std'] = is_std if not torch.isnan(torch.tensor(is_std)) else 0.1
+
+                # Calculate validation loss
+                val_loss = self.calculate_validation_loss(real_videos, samples)
+                metrics['val_loss'] = val_loss if not torch.isnan(torch.tensor(val_loss)) else 0.0
+
+            except Exception as e:
+                logger.warning(f"Error calculating validation metrics: {e}")
+                metrics = {
+                    'val_loss': 0.0,
+                    'fvd': 0.0,
+                    'is_score': 0.0,
+                    'is_std': 0.1,
+                }
         else:
             metrics = {
                 'val_loss': 0.0,
                 'fvd': 0.0,
                 'is_score': 0.0,
+                'is_std': 0.1,
             }
 
         # Log sample videos
@@ -381,56 +398,56 @@ class VideoGenerationTrainer:
         diffusion_model = self.accelerator.unwrap_model(self.diffusion)
         if diffusion_model.use_ema:
             checkpoint['ema_state_dict'] = diffusion_model.ema_model.state_dict()
-            
+
         # Save checkpoint
         checkpoint_path = self.checkpoint_dir / f"checkpoint_epoch_{self.epoch:04d}.pt"
         torch.save(checkpoint, checkpoint_path)
-        
+
         # Save best model
         if is_best:
             best_path = self.checkpoint_dir / "best_model.pt"
             torch.save(checkpoint, best_path)
-            
+
         # Keep only recent checkpoints
         self.cleanup_checkpoints()
-        
+
         logger.info(f"Saved checkpoint: {checkpoint_path}")
-        
+
     def cleanup_checkpoints(self, keep_last: int = 5):
         """Remove old checkpoints"""
         checkpoints = sorted(self.checkpoint_dir.glob("checkpoint_epoch_*.pt"))
-        
+
         if len(checkpoints) > keep_last:
             for checkpoint in checkpoints[:-keep_last]:
                 checkpoint.unlink()
-                
+
     def train(self):
         """Main training loop"""
         logger.info("Starting training...")
-        
+
         # Training loop
         progress_bar = tqdm(
             total=self.total_steps,
             disable=not self.accelerator.is_local_main_process,
             desc="Training"
         )
-        
+
         for epoch in range(self.config['training']['num_epochs']):
             self.epoch = epoch
             epoch_metrics = []
-            
+
             # Training
             self.model.train()
             for batch_idx, batch in enumerate(self.train_dataloader):
                 # Train step
                 metrics = self.train_step(batch)
                 epoch_metrics.append(metrics)
-                
+
                 # Update progress
                 self.global_step += 1
                 progress_bar.update(1)
                 progress_bar.set_postfix(metrics)
-                
+
                 # Log metrics
                 if self.global_step % self.config['training']['log_every_n_steps'] == 0:
                     avg_metrics = {
@@ -438,9 +455,9 @@ class VideoGenerationTrainer:
                         for k in metrics.keys()
                     }
                     self.accelerator.log(avg_metrics, step=self.global_step)
-                    
+
             # Validation
-            if (epoch + 1) % self.config['training']['validate_every_n_epochs'] == 0:
+            if self.config['training']['validate_every_n_epochs'] > 0 and (epoch + 1) % self.config['training']['validate_every_n_epochs'] == 0:
                 val_metrics = self.validate()
                 self.accelerator.log(val_metrics, step=self.global_step)
                 

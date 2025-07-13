@@ -11,20 +11,20 @@ model:
   architecture: "dit"  # Use full DiT architecture for better quality
 
   # Optimized model dimensions for 2x24GB GPUs
-  dim: 384           # Increased for better quality
+  dim: 384           # Good balance for GPU utilization
   dim_mults: [1, 2, 4]  # Full complexity
-  num_heads: 8
+  num_heads: 12
   head_dim: 64
-  depth: 12          # Increased depth for better quality
+  depth: 6           # Good balance for GPU utilization
 
-  # Video parameters
-  num_frames: 16     # Increased for better temporal modeling
-  frame_size: 256    # Reduced for memory efficiency
+  # Video parameters - optimized for GPU training
+  num_frames: 48     # ~2 seconds at 24 fps - conservative for GPU utilization
+  frame_size: 512    # Original video resolution
   channels: 3
-  patch_size: 8      # Smaller patches for better detail
+  patch_size: 16     # Larger patches for memory efficiency
   mlp_ratio: 4.0
   dropout: 0.1
-  learn_sigma: true  # Enable for better quality
+  learn_sigma: false  # Disabled to reduce memory usage
 
   # Diffusion parameters
   timesteps: 1000
@@ -38,16 +38,17 @@ model:
   # Optimization
   gradient_checkpointing: true
   use_flash_attention: true  # Enable for better performance
+  use_memory_efficient_attention: true  # Enable for better memory usage
 
 data:
   dataset_path: "../../dataset/dataset_mp4_cleaned_simple"
-  batch_size: 4  # Increased for 2x24GB GPUs
-  num_workers: 4  # Increased for faster data loading
+  batch_size: 2  # Conservative to avoid OOM
+  num_workers: 4  # Increased for better data loading
 
-  # Video specifications
+  # Video specifications - optimized for GPU training
   fps: 24
-  duration: 1  # seconds
-  resolution: 256  # Match model frame_size
+  duration: 2.0  # seconds - match num_frames
+  resolution: 512  # Original video resolution
 
   # Data augmentation
   random_flip: true   # Re-enable for better training
@@ -60,18 +61,18 @@ data:
 training:
   # Optimization
   optimizer: "adamw"
-  learning_rate: 2e-4  # Slightly higher for faster convergence
-  weight_decay: 0.01
+  learning_rate: 5e-4  # Higher learning rate for overfitting
+  weight_decay: 0.001  # Reduced weight decay for overfitting
   gradient_clip_val: 1.0
 
   # Scheduler
   scheduler: "cosine"
-  warmup_steps: 500  # Reduced for smaller dataset
+  warmup_steps: 100  # Reduced warmup for overfitting
 
   # Training duration
-  num_epochs: 100  # More epochs for overfitting on small dataset
-  save_every_n_epochs: 5
-  validate_every_n_epochs: 3
+  num_epochs: 20  # Reduced for overfitting test
+  save_every_n_epochs: 2
+  validate_every_n_epochs: 2  # Run validation every 2 epochs for overfitting test
 
   # Mixed precision
   mixed_precision: "bf16"  # Options: "no", "fp16", "bf16"
@@ -79,13 +80,13 @@ training:
   # Multi-GPU
   distributed: true
   num_gpus: 2
-  strategy: "ddp"  # Options: "ddp", "deepspeed", "fsdp"
+  strategy: "fsdp"  # Use FSDP for better GPU utilization
 
   # Memory optimization
-  gradient_accumulation_steps: 2  # Reduced for better gradient flow
+  gradient_accumulation_steps: 4  # Increased to maintain effective batch size
   enable_xformers: true  # Enable for better performance
   cpu_offload: false
-  pin_memory: true
+  pin_memory: true  # Enabled for better performance
 
   # Logging
   log_every_n_steps: 5  # More frequent logging for small dataset
@@ -98,7 +99,7 @@ inference:
   fps: 24
   
   # Memory optimization
-  use_fp16: true
+  use_bf16: true
   enable_tiling: true
   
   # Output

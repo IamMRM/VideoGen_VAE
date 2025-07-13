@@ -3,7 +3,7 @@
 # Video generation script
 
 # Configuration
-CHECKPOINT_PATH="checkpoints/checkpoint_epoch_0024.pt"
+CHECKPOINT_PATH="checkpoints/checkpoint_epoch_0099.pt"
 OUTPUT_DIR="generated_videos"
 NUM_VIDEOS=2
 NUM_INFERENCE_STEPS=1000
@@ -24,7 +24,7 @@ python src/inference/generate.py \
     --guidance-scale 7.5 \
     --fps 24 \
     --format mp4 \
-    --fp16 \
+    --bf16 \
     --seed 42
 
 echo "Video generation completed! Check $OUTPUT_DIR for results." 
