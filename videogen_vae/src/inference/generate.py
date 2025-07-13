@@ -22,6 +22,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.dit import create_dit_model
+from models.simple_dit import create_simple_dit_model
 from models.diffusion import VideoDiffusion
 
 
@@ -30,43 +31,49 @@ logger = logging.getLogger(__name__)
 
 class VideoGenerator:
     """Video generation inference class"""
-    
+
     def __init__(
         self,
         checkpoint_path: str,
         config_path: Optional[str] = None,
         device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
+        dtype: torch.dtype = torch.bfloat16,
     ):
         self.device = device
         self.dtype = dtype
-        
+
         # Load checkpoint
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        
+
         # Load config
         if config_path:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
         else:
             self.config = checkpoint.get('config', {})
-            
+
         # Initialize model
         self.setup_model(checkpoint)
-        
+
     def setup_model(self, checkpoint: Dict[str, Any]):
         """Setup model from checkpoint"""
-        # Create model
-        self.model = create_dit_model(self.config)
-        
+        # Create model based on architecture
+        architecture = self.config['model'].get('architecture', 'dit')
+        if architecture == 'simple_dit':
+            logger.info("Creating SimpleVideoDiT model")
+            self.model = create_simple_dit_model(self.config)
+        else:
+            logger.info("Creating VideoDiT model")
+            self.model = create_dit_model(self.config)
+
         # Load weights
         if 'ema_state_dict' in checkpoint:
             logger.info("Loading EMA model weights")
             self.model.load_state_dict(checkpoint['ema_state_dict'])
         else:
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            
+
         # Create diffusion wrapper
         self.diffusion = VideoDiffusion(
             model=self.model,
@@ -75,37 +82,46 @@ class VideoGenerator:
             beta_schedule=self.config['model']['beta_schedule'],
             use_ema=False,  # Already loaded EMA weights
         )
-        
+
         # Move to device and set dtype
         self.diffusion = self.diffusion.to(self.device)
-        if self.dtype == torch.float16:
-            self.diffusion = self.diffusion.half()
-            
+
         # Set eval mode
         self.diffusion.eval()
-        
+
+        # Debug: Check model dtype
+        model_dtype = next(self.diffusion.model.parameters()).dtype
+        logger.info(f"Model dtype: {model_dtype}")
+
+        # Force model to be in the correct dtype
+        if self.dtype == torch.bfloat16:
+            self.diffusion = self.diffusion.bfloat16()
+            # Ensure all model parameters are in bfloat16
+            for param in self.diffusion.parameters():
+                param.data = param.data.bfloat16()
+
         # Setup text encoder if needed
         if self.config['model']['use_text_conditioning']:
             self.setup_text_encoder()
-            
+
     def setup_text_encoder(self):
         """Setup text encoder for conditioning"""
         logger.info("Setting up text encoder")
-        
+
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
         self.text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
-        
+
         self.text_encoder = self.text_encoder.to(self.device)
-        if self.dtype == torch.float16:
-            self.text_encoder = self.text_encoder.half()
-            
+        if self.dtype == torch.bfloat16:
+            self.text_encoder = self.text_encoder.bfloat16()
+
         self.text_encoder.eval()
-        
+
     def encode_text(self, prompts: List[str]) -> torch.Tensor:
         """Encode text prompts"""
         if not hasattr(self, 'text_encoder'):
             return None
-            
+
         inputs = self.tokenizer(
             prompts,
             padding=True,
@@ -113,12 +129,12 @@ class VideoGenerator:
             max_length=77,
             return_tensors="pt"
         ).to(self.device)
-        
+
         with torch.no_grad():
             text_embeddings = self.text_encoder(**inputs).last_hidden_state
-            
+
         return text_embeddings
-        
+
     @torch.no_grad()
     def generate(
         self,
@@ -135,7 +151,7 @@ class VideoGenerator:
         progress: bool = True,
     ) -> torch.Tensor:
         """Generate videos"""
-        
+
         # Set dimensions
         if num_frames is None:
             num_frames = self.config['model']['num_frames']
@@ -143,12 +159,12 @@ class VideoGenerator:
             height = self.config['model']['frame_size']
         if width is None:
             width = self.config['model']['frame_size']
-            
+
         # Set seed for reproducibility
         if seed is not None:
             torch.manual_seed(seed)
             np.random.seed(seed)
-            
+
         # Prepare prompts
         if prompts is None:
             prompts = [""] * num_videos
@@ -156,16 +172,16 @@ class VideoGenerator:
             prompts = prompts * num_videos
         elif len(prompts) != num_videos:
             raise ValueError(f"Number of prompts ({len(prompts)}) must match num_videos ({num_videos})")
-            
+
         # Encode text
         text_embeddings = self.encode_text(prompts) if prompts[0] else None
-        
+
         # Classifier-free guidance
         if guidance_scale > 1.0 and text_embeddings is not None:
             # Create unconditional embeddings
             uncond_embeddings = self.encode_text([""] * num_videos)
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
-            
+
         # Generate shape
         shape = (
             num_videos,
@@ -174,7 +190,7 @@ class VideoGenerator:
             height,
             width
         )
-        
+
         # Generate
         if use_ddim:
             samples = self.diffusion.ddim_sample(
@@ -192,19 +208,19 @@ class VideoGenerator:
                 device=self.device,
                 progress=progress
             )
-            
+
         # Apply guidance
         if guidance_scale > 1.0 and text_embeddings is not None:
             # Split conditional and unconditional
             samples_uncond, samples_cond = samples.chunk(2)
             samples = samples_uncond + guidance_scale * (samples_cond - samples_uncond)
-            
+
         # Convert to [0, 1] range
         samples = (samples + 1) / 2
         samples = torch.clamp(samples, 0, 1)
-        
+
         return samples
-        
+
     def save_videos(
         self,
         videos: torch.Tensor,
@@ -217,20 +233,20 @@ class VideoGenerator:
         """Save generated videos to disk"""
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Convert to numpy
-        videos = videos.cpu().numpy()
-        
+
+        # Convert to numpy (ensure float32 for saving)
+        videos = videos.float().cpu().numpy()
+
         for i, video in enumerate(videos):
             # Rearrange dimensions: [T, C, H, W] -> [T, H, W, C]
             video = np.transpose(video, (0, 2, 3, 1))
-            
+
             # Convert to uint8
             video = (video * 255).astype(np.uint8)
-            
+
             # Save video
             output_path = output_dir / f"{prefix}_{i:04d}.{format}"
-            
+
             if format == "mp4":
                 self._save_mp4(video, output_path, fps, codec)
             elif format == "gif":
@@ -239,9 +255,9 @@ class VideoGenerator:
                 self._save_webm(video, output_path, fps)
             else:
                 raise ValueError(f"Unknown format: {format}")
-                
+
             logger.info(f"Saved video: {output_path}")
-            
+
     def _save_mp4(self, frames: np.ndarray, output_path: Path, fps: int, codec: str):
         """Save video as MP4"""
         writer = imageio.get_writer(
@@ -251,17 +267,17 @@ class VideoGenerator:
             quality=9,
             pixelformat='yuv420p'
         )
-        
+
         for frame in frames:
             writer.append_data(frame)
-            
+
         writer.close()
-        
+
     def _save_gif(self, frames: np.ndarray, output_path: Path, fps: int):
         """Save video as GIF"""
         # Convert to PIL images
         pil_frames = [Image.fromarray(frame) for frame in frames]
-        
+
         # Save as GIF
         pil_frames[0].save(
             output_path,
@@ -270,7 +286,7 @@ class VideoGenerator:
             duration=int(1000 / fps),
             loop=0
         )
-        
+
     def _save_webm(self, frames: np.ndarray, output_path: Path, fps: int):
         """Save video as WebM"""
         writer = imageio.get_writer(
@@ -279,12 +295,12 @@ class VideoGenerator:
             codec='libvpx-vp9',
             quality=9,
         )
-        
+
         for frame in frames:
             writer.append_data(frame)
-            
+
         writer.close()
-        
+
     def save_frames(
         self,
         videos: torch.Tensor,
@@ -294,25 +310,25 @@ class VideoGenerator:
         """Save individual frames as images"""
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Convert to numpy
-        videos = videos.cpu().numpy()
-        
+
+        # Convert to numpy (ensure float32 for saving)
+        videos = videos.float().cpu().numpy()
+
         for video_idx, video in enumerate(videos):
             video_dir = output_dir / f"video_{video_idx:04d}"
             video_dir.mkdir(exist_ok=True)
-            
+
             # Rearrange dimensions: [T, C, H, W] -> [T, H, W, C]
             video = np.transpose(video, (0, 2, 3, 1))
-            
+
             # Convert to uint8
             video = (video * 255).astype(np.uint8)
-            
+
             # Save frames
             for frame_idx, frame in enumerate(video):
                 frame_path = video_dir / f"{prefix}_{frame_idx:04d}.png"
                 Image.fromarray(frame).save(frame_path)
-                
+
             logger.info(f"Saved frames to: {video_dir}")
 
 
@@ -334,22 +350,22 @@ def main():
     parser.add_argument("--fps", type=int, default=24, help="Frames per second")
     parser.add_argument("--save-frames", action="store_true", help="Save individual frames")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use")
-    parser.add_argument("--fp16", action="store_true", help="Use FP16 precision")
-    
+    parser.add_argument("--bf16", action="store_true", help="Use BF16 precision")
+
     args = parser.parse_args()
-    
+
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Create generator
     generator = VideoGenerator(
         checkpoint_path=args.checkpoint,
         config_path=args.config,
         device=args.device,
-        dtype=torch.float16 if args.fp16 else torch.float32,
+        dtype=torch.bfloat16 if args.bf16 else torch.float32,
     )
     
     # Generate videos

@@ -32,7 +32,8 @@ python-dotenv>=1.0.0
 
 # Model optimization
 xformers>=0.0.22
-flash-attn>=2.3.0
+#flash-attn>=2.3.0
+flash-attn==1.0.5
 triton>=2.1.0
 
 # Metrics and evaluation

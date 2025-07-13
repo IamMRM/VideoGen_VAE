@@ -110,8 +110,8 @@ class VideoDiffusion(nn.Module):
             
     def _create_ema_model(self):
         """Create exponential moving average model"""
-        ema_model = type(self.model)(**{k: v for k, v in self.model.__dict__.items() if not k.startswith('_')})
-        ema_model.load_state_dict(self.model.state_dict())
+        import copy
+        ema_model = copy.deepcopy(self.model)
         ema_model.eval()
         for param in ema_model.parameters():
             param.requires_grad = False
@@ -144,32 +144,32 @@ class VideoDiffusion(nn.Module):
         
     def predict_start_from_noise(self, x_t: torch.Tensor, t: torch.Tensor, noise: torch.Tensor):
         """Predict x_0 from x_t and noise"""
-        sqrt_recip_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recip_alphas_cumprod, t, x_t.shape)
-        sqrt_recipm1_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        sqrt_recip_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recip_alphas_cumprod, t, x_t.shape).to(x_t.dtype)
+        sqrt_recipm1_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recipm1_alphas_cumprod, t, x_t.shape).to(x_t.dtype)
         return sqrt_recip_alphas_cumprod_t * x_t - sqrt_recipm1_alphas_cumprod_t * noise
-        
+
     def predict_noise_from_start(self, x_t: torch.Tensor, t: torch.Tensor, x_0: torch.Tensor):
         """Predict noise from x_t and x_0"""
         sqrt_recip_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recip_alphas_cumprod, t, x_t.shape)
         sqrt_recipm1_alphas_cumprod_t = self._extract(self.noise_schedule.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
         return (sqrt_recip_alphas_cumprod_t * x_t - x_0) / sqrt_recipm1_alphas_cumprod_t
-        
+
     def p_losses(
-        self, 
-        x_start: torch.Tensor, 
-        t: torch.Tensor, 
+        self,
+        x_start: torch.Tensor,
+        t: torch.Tensor,
         text_emb: Optional[torch.Tensor] = None,
         noise: Optional[torch.Tensor] = None
     ):
         """Calculate training loss"""
         if noise is None:
             noise = torch.randn_like(x_start)
-            
+
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        
+
         # Model prediction
         model_output = self.model(x_noisy, t, text_emb)
-        
+
         # Calculate target based on parameterization
         if self.parameterization == "eps":
             target = noise
@@ -179,7 +179,7 @@ class VideoDiffusion(nn.Module):
             target = v
         else:
             raise ValueError(f"Unknown parameterization: {self.parameterization}")
-            
+
         # Calculate loss
         if self.loss_type == "l1":
             loss = F.l1_loss(model_output, target, reduction="none")
@@ -189,34 +189,34 @@ class VideoDiffusion(nn.Module):
             loss = F.smooth_l1_loss(model_output, target, reduction="none")
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
-            
+
         return loss.mean()
-        
+
     def forward(self, x: torch.Tensor, text_emb: Optional[torch.Tensor] = None):
         """Training forward pass"""
         b = x.shape[0]
         device = x.device
-        
+
         # Sample random timesteps
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
-        
+
         return self.p_losses(x, t, text_emb)
-        
+
     @torch.no_grad()
     def p_sample(
-        self, 
-        x: torch.Tensor, 
-        t: torch.Tensor, 
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
         text_emb: Optional[torch.Tensor] = None,
         clip_denoised: bool = True,
         return_pred_x0: bool = False
     ):
         """Single denoising step"""
         model = self.ema_model if self.use_ema and not self.training else self.model
-        
+
         # Model prediction
         model_output = model(x, t, text_emb)
-        
+
         # Get x_0 prediction
         if self.parameterization == "eps":
             pred_x0 = self.predict_start_from_noise(x, t, model_output)
@@ -225,10 +225,10 @@ class VideoDiffusion(nn.Module):
             v = model_output
             eps = self.noise_schedule.sqrt_one_minus_alphas_cumprod[t] * v + self.noise_schedule.sqrt_alphas_cumprod[t] * x
             pred_x0 = self.predict_start_from_noise(x, t, eps)
-        
+
         if clip_denoised:
             pred_x0 = torch.clamp(pred_x0, -1, 1)
-            
+
         # Get posterior distribution
         posterior_mean = (
             self._extract(self.noise_schedule.posterior_mean_coef1, t, x.shape) * pred_x0 +
@@ -236,15 +236,15 @@ class VideoDiffusion(nn.Module):
         )
         posterior_variance = self._extract(self.noise_schedule.posterior_variance, t, x.shape)
         posterior_log_variance = self._extract(self.noise_schedule.posterior_log_variance_clipped, t, x.shape)
-        
+
         # Sample
-        noise = torch.randn_like(x) if t[0] > 0 else 0
+        noise = torch.randn_like(x) if t[0] > 0 else torch.zeros_like(x)
         pred = posterior_mean + torch.exp(0.5 * posterior_log_variance) * noise
-        
+
         if return_pred_x0:
             return pred, pred_x0
         return pred
-        
+
     @torch.no_grad()
     def sample(
         self,
@@ -255,24 +255,26 @@ class VideoDiffusion(nn.Module):
         return_intermediates: bool = False
     ):
         """Generate samples using DDPM sampling"""
-        x = torch.randn(shape, device=device)
+        # Create noise tensor with same dtype as model
+        dtype = next(self.model.parameters()).dtype
+        x = torch.randn(shape, device=device, dtype=dtype)
         intermediates = []
-        
+
         timesteps = list(reversed(range(0, self.num_timesteps)))
         if progress:
             timesteps = tqdm(timesteps, desc="Sampling")
-            
+
         for t in timesteps:
             t_batch = torch.full((shape[0],), t, device=device, dtype=torch.long)
             x = self.p_sample(x, t_batch, text_emb)
-            
+
             if return_intermediates and t % 100 == 0:
                 intermediates.append(x.clone())
-                
+
         if return_intermediates:
             return x, intermediates
         return x
-        
+
     @torch.no_grad()
     def ddim_sample(
         self,
@@ -287,20 +289,22 @@ class VideoDiffusion(nn.Module):
         # Select subset of timesteps
         c = self.num_timesteps // ddim_timesteps
         ddim_timestep_seq = np.asarray(list(range(0, self.num_timesteps, c)))
-        
-        x = torch.randn(shape, device=device)
-        
+
+        # Create noise tensor with same dtype as model
+        dtype = next(self.model.parameters()).dtype
+        x = torch.randn(shape, device=device, dtype=dtype)
+
         timesteps = reversed(ddim_timestep_seq)
         if progress:
             timesteps = tqdm(timesteps, desc="DDIM Sampling")
-            
+
         for i, t in enumerate(timesteps):
             t_batch = torch.full((shape[0],), t, device=device, dtype=torch.long)
-            
+
             # Model prediction
             model = self.ema_model if self.use_ema else self.model
             model_output = model(x, t_batch, text_emb)
-            
+
             # Get x_0 prediction
             if self.parameterization == "eps":
                 pred_x0 = self.predict_start_from_noise(x, t_batch, model_output)
@@ -309,21 +313,21 @@ class VideoDiffusion(nn.Module):
                 v = model_output
                 eps = self.noise_schedule.sqrt_one_minus_alphas_cumprod[t] * v + self.noise_schedule.sqrt_alphas_cumprod[t] * x
                 pred_x0 = self.predict_start_from_noise(x, t_batch, eps)
-                
+
             # DDIM update
             if i < len(ddim_timestep_seq) - 1:
                 t_next = ddim_timestep_seq[i + 1]
-                alpha_bar = self.noise_schedule.alphas_cumprod[t]
-                alpha_bar_next = self.noise_schedule.alphas_cumprod[t_next]
-                
+                alpha_bar = self.noise_schedule.alphas_cumprod[t].to(x.dtype)
+                alpha_bar_next = self.noise_schedule.alphas_cumprod[t_next].to(x.dtype)
+
                 sigma = eta * torch.sqrt((1 - alpha_bar_next) / (1 - alpha_bar)) * torch.sqrt(1 - alpha_bar / alpha_bar_next)
-                
+
                 mean_pred = (
                     torch.sqrt(alpha_bar_next) * pred_x0 +
                     torch.sqrt(1 - alpha_bar_next - sigma ** 2) * eps
                 )
-                
-                noise = torch.randn_like(x) if eta > 0 else 0
+
+                noise = torch.randn_like(x) if eta > 0 else torch.zeros_like(x)
                 x = mean_pred + sigma * noise
             else:
                 x = pred_x0
